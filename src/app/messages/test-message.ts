@@ -1,20 +1,20 @@
-import { type Test, type ErrorWithDiff } from 'vitest'
+import { TestError } from '@vitest/utils'
 import { Message, type Parameters } from './message'
+import { TestCase } from 'vitest/node'
 
 export class TestMessage extends Message {
-  constructor(test: Test) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    super(test.file!.id, test.name)
+  constructor(test: TestCase) {
+    super(test.module.id, test.name)
   }
 
   protected generate(type: string, parameters: Parameters = {}): string {
     return this.generateTeamcityMessage(type, this.id, { ...parameters, name: this.name })
   }
 
-  fail = (error: ErrorWithDiff): string => {
+  fail = (error: TestError): string => {
     return this.generate('testFailed', {
       message: error.message ?? '',
-      details: error.stackStr ?? '',
+      details: error.stack ?? '',
       actual: (error.actual as string) ?? '',
       expected: (error.expected as string) ?? '',
     })

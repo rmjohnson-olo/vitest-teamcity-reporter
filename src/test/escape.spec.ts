@@ -1,7 +1,8 @@
-import { describe, it, expect, type Test } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { escape } from '../app/escape'
 import { SuitMessage } from '../app/messages/suite-message'
 import { TestMessage } from '../app/messages/test-message'
+import { TestCase } from 'vitest/node'
 
 const escapeMap = {
   '\x1B1m': '',
@@ -58,7 +59,7 @@ describe('Checking message escaping functionality', () => {
         id: fileId,
       },
       type: 'test',
-    } as unknown as Test)
+    } as unknown as TestCase)
 
     const escapedMessage = test.started()
     expect(escapedMessage).toStrictEqual(`##teamcity[testStarted flowId='${fileId}' name='${expectedString}']`)

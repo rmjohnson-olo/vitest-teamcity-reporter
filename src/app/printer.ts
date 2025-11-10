@@ -1,17 +1,9 @@
-import {
-  type File,
-  type Suite,
-  type Task,
-  type TaskResultPack,
-  type Test,
-  type UserConsoleLog,
-  type Vitest,
-  type ErrorWithDiff,
-} from 'vitest'
+import { TestCase, TestModule, TestSuite, Vitest } from 'vitest/node'
 import { SuitMessage } from './messages/suite-message'
 import { escape } from './escape'
 import { TestMessage } from './messages/test-message'
 import MissingResultError from './error/missing-result.error'
+import { TestError, UserConsoleLog } from 'vitest'
 
 type PotentialMessage = string | (() => string | string[])
 type PotentialMessages = PotentialMessage[]
@@ -20,12 +12,12 @@ export class Printer {
   private readonly fileMessageMap = new Map<string, PotentialMessages>()
   private readonly testConsoleMap = new Map<string, UserConsoleLog[]>()
 
-  constructor(private readonly logger: Vitest['logger']) { }
+  constructor(private readonly logger: Vitest['logger']) {}
 
-  public addFile = (file: File): void => {
-    const suitMessage = new SuitMessage(file.id, escape(file.name))
-    const messages = [suitMessage.started(), ...file.tasks.flatMap(this.handleTask), suitMessage.finished()]
-    this.fileMessageMap.set(file.id, messages)
+  public addTestModule = (testModule: TestModule): void => {
+    const suitMessage = new SuitMessage(testModule.id, escape(testModule.relativeModuleId))
+    const messages = [suitMessage.started(), ...testModule.children.array().flatMap(this.handleTask), suitMessage.finished()]
+    this.fileMessageMap.set(testModule.id, messages)
   }
 
   public addTestConsoleLog(id: string, log: UserConsoleLog): void {
@@ -37,9 +29,11 @@ export class Printer {
     }
   }
 
-  public handeUpdate = ([id, result]: TaskResultPack): void => {
+  public handleResult = (task: TestCase | TestSuite | TestModule): void => {
+    const { id } = task
+    const state = task.type === 'test' ? task.result().state : task.state()
     const messages = this.fileMessageMap.get(id)
-    if (messages != null && result != null && result.state !== 'run') {
+    if (messages != null && state != null && state !== 'pending') {
       messages
         .flatMap((message: PotentialMessage) => (typeof message === 'string' ? message : message()))
         .forEach((message) => {
@@ -49,38 +43,40 @@ export class Printer {
     }
   }
 
-  private readonly handleTask = (task: Task): PotentialMessage | PotentialMessage[] => {
+  private readonly handleTask = (task: TestCase | TestSuite): PotentialMessage | PotentialMessage[] => {
     if (task.type === 'test') {
       return this.handleTest(task)
     }
-    if (task.type === 'suite' && task.mode === 'run') {
+    if (task.type === 'suite' && task.state() !== 'skipped') {
       return this.handleSuite(task)
     }
     return []
   }
 
-  private readonly handleSuite = (suite: Suite): PotentialMessage[] => {
+  private readonly handleSuite = (suite: TestSuite): PotentialMessage[] => {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const suitMessage = new SuitMessage(suite.file.id, escape(suite.name))
-    return [suitMessage.started(), ...suite.tasks.flatMap(this.handleTask), suitMessage.finished()]
+    const suitMessage = new SuitMessage(suite.id, escape(suite.name))
+    return [suitMessage.started(), ...suite.children.array().flatMap(this.handleTask), suitMessage.finished()]
   }
 
-  private readonly handleTest = (test: Test): PotentialMessage => {
+  private readonly handleTest = (test: TestCase): PotentialMessage => {
     const testMessage = new TestMessage(test)
-    if (test.mode === 'skip' || test.mode === 'todo') {
+    if (test.result().state === 'skipped') {
       return testMessage.ignored()
     }
     return () => {
-      const fail = test.result == null || test.result.state === 'fail'
+      const fail = test.result() == null || test.result().state === 'failed'
 
       const logs = this.testConsoleMap.get(test.id) ?? []
       const logsMessages = logs.map((log) => testMessage.log(log.type, log.content))
       const filedMessages = fail ? this.getTestErrors(test).map(testMessage.fail) : []
 
-      return [testMessage.started(), ...logsMessages, ...filedMessages, testMessage.finished(test.result?.duration ?? 0)].filter(Boolean)
+      return [testMessage.started(), ...logsMessages, ...filedMessages, testMessage.finished(test.diagnostic()?.duration ?? 0)].filter(
+        Boolean
+      )
     }
   }
 
-  private readonly getTestErrors = (test: Test): ErrorWithDiff[] =>
-    test.result?.errors ?? test.suite?.result?.errors ?? test.file?.result?.errors ?? [new MissingResultError(test)]
+  private readonly getTestErrors = (test: TestCase): readonly TestError[] =>
+    test.result()?.errors ?? test.parent?.errors() ?? test.module.errors() ?? [new MissingResultError(test)]
 }
